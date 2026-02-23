@@ -1,16 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Heart, 
-  Activity, 
-  Users, 
-  ClipboardList, 
-  Search, 
-  User as UserIcon, 
-  LogIn, 
-  LogOut, 
-  Plus, 
-  CheckCircle, 
-  XCircle, 
+import {
+  Heart,
+  Activity,
+  Users,
+  ClipboardList,
+  Search,
+  User as UserIcon,
+  LogIn,
+  LogOut,
+  Plus,
+  CheckCircle,
+  XCircle,
   AlertCircle,
   Menu,
   X,
@@ -36,7 +36,7 @@ const api = {
       ...options.headers,
     };
     const response = await fetch(`${API_URL}${endpoint}`, { ...options, headers });
-    
+
     const text = await response.text();
     let data: any;
     try {
@@ -122,7 +122,7 @@ const Select = ({ label, options, ...props }: React.SelectHTMLAttributes<HTMLSel
 
 const LandingPage = ({ onStart }: { onStart: () => void }) => (
   <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center">
-    <motion.div 
+    <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       className="max-w-2xl space-y-8"
@@ -205,21 +205,21 @@ const AuthPage = ({ onLogin }: { onLogin: (user: any) => void }) => {
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          <Input label="Username" value={formData.username} onChange={e => setFormData({...formData, username: e.target.value})} required />
-          <Input label="Password" type="password" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} required />
-          
+          <Input label="Username" value={formData.username} onChange={e => setFormData({ ...formData, username: e.target.value })} required />
+          <Input label="Password" type="password" value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })} required />
+
           {!isLogin && (
             <>
-              <Input label="Full Name" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} required />
+              <Input label="Full Name" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} required />
               <div className="grid grid-cols-2 gap-4">
-                <Input label="Age" type="number" value={formData.age} onChange={e => setFormData({...formData, age: e.target.value})} required />
-                <Select label="Gender" options={[{value: 'Male', label: 'Male'}, {value: 'Female', label: 'Female'}, {value: 'Other', label: 'Other'}]} value={formData.gender} onChange={e => setFormData({...formData, gender: e.target.value})} />
+                <Input label="Age" type="number" value={formData.age} onChange={e => setFormData({ ...formData, age: e.target.value })} required />
+                <Select label="Gender" options={[{ value: 'Male', label: 'Male' }, { value: 'Female', label: 'Female' }, { value: 'Other', label: 'Other' }]} value={formData.gender} onChange={e => setFormData({ ...formData, gender: e.target.value })} />
               </div>
               <div className="grid grid-cols-2 gap-4">
-                <Select label="Blood Group" options={['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'].map(bg => ({value: bg, label: bg}))} value={formData.blood_group} onChange={e => setFormData({...formData, blood_group: e.target.value})} />
-                <Select label="Role" options={[{value: 'DONOR', label: 'Donor'}, {value: 'RECIPIENT', label: 'Recipient'}]} value={formData.role} onChange={e => setFormData({...formData, role: e.target.value as Role})} />
+                <Select label="Blood Group" options={['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'].map(bg => ({ value: bg, label: bg }))} value={formData.blood_group} onChange={e => setFormData({ ...formData, blood_group: e.target.value })} />
+                <Select label="Role" options={[{ value: 'DONOR', label: 'Donor' }, { value: 'RECIPIENT', label: 'Recipient' }]} value={formData.role} onChange={e => setFormData({ ...formData, role: e.target.value as Role })} />
               </div>
-              <Input label="Contact Number" value={formData.contact} onChange={e => setFormData({...formData, contact: e.target.value})} required />
+              <Input label="Contact Number" value={formData.contact} onChange={e => setFormData({ ...formData, contact: e.target.value })} required />
             </>
           )}
 
@@ -242,6 +242,7 @@ const AdminDashboard = () => {
   const [stats, setStats] = useState<any>(null);
   const [requests, setRequests] = useState<OrganRequest[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
+  const [donors, setDonors] = useState<User[]>([]);
   const [suggestedMatches, setSuggestedMatches] = useState<any[]>([]);
   const [selectedRequest, setSelectedRequest] = useState<OrganRequest | null>(null);
   const [loading, setLoading] = useState(true);
@@ -252,14 +253,16 @@ const AdminDashboard = () => {
 
   const loadData = async () => {
     try {
-      const [s, r, m] = await Promise.all([
+      const [s, r, m, d] = await Promise.all([
         api.fetch('/api/admin/stats'),
         api.fetch('/api/admin/requests'),
-        api.fetch('/api/admin/matches')
+        api.fetch('/api/admin/matches'),
+        api.fetch('/api/admin/donors')
       ]);
       setStats(s);
       setRequests(r);
       setMatches(m);
+      setDonors(d);
     } catch (err) {
       console.error(err);
     } finally {
@@ -370,7 +373,7 @@ const AdminDashboard = () => {
                     </td>
                     <td className="py-3">
                       {req.status === 'PENDING' && (
-                        <button 
+                        <button
                           onClick={() => handleSuggestMatches(req)}
                           className="text-indigo-600 hover:underline font-medium"
                         >
@@ -410,15 +413,50 @@ const AdminDashboard = () => {
         </Card>
       </div>
 
+      <Card className="p-6">
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+            <Users size={20} className="text-indigo-600" /> Recent Registered Donors
+          </h3>
+          <button
+            onClick={() => {
+              // This is a workaround to trigger the view change from within a child
+              // In a real app we'd use a store or context
+              window.dispatchEvent(new CustomEvent('change-view', { detail: 'admin-users' }));
+            }}
+            className="text-sm text-indigo-600 hover:underline font-medium"
+          >
+            View All Users
+          </button>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {donors.slice(0, 6).map(donor => (
+            <div key={donor.id} className="p-4 border border-slate-100 rounded-2xl bg-slate-50 flex items-center gap-4">
+              <div className="p-2 bg-white rounded-xl text-indigo-600">
+                <UserIcon size={20} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="font-bold text-slate-900 truncate">{donor.name}</div>
+                <div className="flex items-center gap-2 mt-1">
+                  <Badge variant="danger">{donor.blood_group}</Badge>
+                  <span className="text-xs text-slate-500 truncate">{donor.contact}</span>
+                </div>
+              </div>
+            </div>
+          ))}
+          {donors.length === 0 && <div className="col-span-full text-center py-8 text-slate-400">No donors registered yet.</div>}
+        </div>
+      </Card>
+
       <AnimatePresence>
         {selectedRequest && (
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-6"
           >
-            <motion.div 
+            <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
@@ -560,10 +598,10 @@ const UserDashboard = ({ user }: { user: User }) => {
       <div className="grid grid-cols-1 gap-8">
         <Card className="p-6">
           <h3 className="text-lg font-bold text-slate-900 mb-6 flex items-center gap-2">
-            {user.role === 'DONOR' ? <Activity size={20} className="text-emerald-600" /> : <ClipboardList size={20} className="text-amber-600" />} 
+            {user.role === 'DONOR' ? <Activity size={20} className="text-emerald-600" /> : <ClipboardList size={20} className="text-amber-600" />}
             {user.role === 'DONOR' ? 'My Registered Organs' : 'My Organ Requests'}
           </h3>
-          
+
           <div className="space-y-4">
             {user.role === 'DONOR' ? (
               organs.map(organ => (
@@ -613,13 +651,13 @@ const UserDashboard = ({ user }: { user: User }) => {
       {/* Modals */}
       <AnimatePresence>
         {(showAddOrgan || showAddRequest) && (
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-6"
           >
-            <motion.div 
+            <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
@@ -632,24 +670,24 @@ const UserDashboard = ({ user }: { user: User }) => {
                 </button>
               </div>
               <form onSubmit={showAddOrgan ? handleAddOrgan : handleAddRequest} className="space-y-4">
-                <Select 
-                  label="Organ Type" 
-                  options={['KIDNEY', 'LIVER', 'HEART', 'LUNGS', 'PANCREAS', 'CORNEA'].map(o => ({value: o, label: o}))} 
+                <Select
+                  label="Organ Type"
+                  options={['KIDNEY', 'LIVER', 'HEART', 'LUNGS', 'PANCREAS', 'CORNEA'].map(o => ({ value: o, label: o }))}
                   value={formData.organ_type}
-                  onChange={e => setFormData({...formData, organ_type: e.target.value})}
+                  onChange={e => setFormData({ ...formData, organ_type: e.target.value })}
                 />
-                <Select 
-                  label="Blood Group" 
-                  options={['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'].map(bg => ({value: bg, label: bg}))} 
+                <Select
+                  label="Blood Group"
+                  options={['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'].map(bg => ({ value: bg, label: bg }))}
                   value={formData.blood_group}
-                  onChange={e => setFormData({...formData, blood_group: e.target.value})}
+                  onChange={e => setFormData({ ...formData, blood_group: e.target.value })}
                 />
                 {!showAddOrgan && (
-                  <Select 
-                    label="Urgency Level" 
-                    options={[{value: 'CRITICAL', label: 'Critical'}, {value: 'HIGH', label: 'High'}, {value: 'MEDIUM', label: 'Medium'}, {value: 'LOW', label: 'Low'}]} 
+                  <Select
+                    label="Urgency Level"
+                    options={[{ value: 'CRITICAL', label: 'Critical' }, { value: 'HIGH', label: 'High' }, { value: 'MEDIUM', label: 'Medium' }, { value: 'LOW', label: 'Low' }]}
                     value={formData.urgency_level}
-                    onChange={e => setFormData({...formData, urgency_level: e.target.value})}
+                    onChange={e => setFormData({ ...formData, urgency_level: e.target.value })}
                   />
                 )}
                 <Button type="submit" className="w-full py-3">
@@ -725,7 +763,7 @@ const AdminUsersPage = () => {
                 <td className="px-6 py-4"><Badge variant="danger">{u.blood_group}</Badge></td>
                 <td className="px-6 py-4 text-slate-600">{u.contact}</td>
                 <td className="px-6 py-4 text-right">
-                  <button 
+                  <button
                     onClick={() => handleDeleteUser(u.id)}
                     className="p-2 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
                     title="Remove User"
@@ -892,6 +930,10 @@ export default function App() {
       checkAuth();
     };
     init();
+
+    const handleViewChange = (e: any) => setView(e.detail);
+    window.addEventListener('change-view', handleViewChange);
+    return () => window.removeEventListener('change-view', handleViewChange);
   }, []);
 
   const checkAuth = async () => {
@@ -920,7 +962,7 @@ export default function App() {
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
       {view === 'landing' && <LandingPage onStart={() => setView('auth')} />}
       {view === 'auth' && <AuthPage onLogin={(u) => { setUser(u); setView('dashboard'); }} />}
-      
+
       {user && (view === 'dashboard' || view === 'profile' || view === 'admin-users' || view === 'admin-organs') && (
         <div className="flex flex-col min-h-screen">
           <nav className="bg-white border-b border-slate-200 sticky top-0 z-40">
@@ -931,10 +973,10 @@ export default function App() {
                 </div>
                 <span className="text-xl font-bold tracking-tight">LifeStream</span>
               </div>
-              
+
               <div className="flex items-center gap-8">
                 <div className="hidden md:flex items-center gap-6">
-                  <button 
+                  <button
                     onClick={() => setView('dashboard')}
                     className={cn(
                       "text-sm font-bold transition-colors",
@@ -945,7 +987,7 @@ export default function App() {
                   </button>
                   {user.role === 'ADMIN' && (
                     <>
-                      <button 
+                      <button
                         onClick={() => setView('admin-users')}
                         className={cn(
                           "text-sm font-bold transition-colors",
@@ -954,7 +996,7 @@ export default function App() {
                       >
                         Users
                       </button>
-                      <button 
+                      <button
                         onClick={() => setView('admin-organs')}
                         className={cn(
                           "text-sm font-bold transition-colors",
@@ -965,7 +1007,7 @@ export default function App() {
                       </button>
                     </>
                   )}
-                  <button 
+                  <button
                     onClick={() => setView('profile')}
                     className={cn(
                       "text-sm font-bold transition-colors",
@@ -1012,7 +1054,7 @@ export default function App() {
 
           <footer className="bg-white border-t border-slate-200 py-8">
             <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="text-sm text-slate-500">© 2026 LifeStream. All rights reserved.</div>
+              <div className="text-sm text-slate-500">© 2026 LifeStream. All rights reserved.</div>
               <div className="flex items-center gap-6 text-sm text-slate-400">
                 <a href="#" className="hover:text-indigo-600">Privacy Policy</a>
                 <a href="#" className="hover:text-indigo-600">Terms of Service</a>

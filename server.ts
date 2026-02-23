@@ -12,17 +12,17 @@ let dbPromise: Promise<any> | null = null;
 
 async function initDb() {
   if (dbPromise) return dbPromise;
-  
+
   dbPromise = (async () => {
     try {
       console.log("Attempting to load better-sqlite3...");
       // Dynamic import to avoid bundling issues on Vercel
       const { default: Database } = await import("better-sqlite3");
-      
+
       const dbPath = process.env.VERCEL ? ":memory:" : "organ_donation.db";
       console.log(`Initializing Database at: ${dbPath}`);
       const instance = new Database(dbPath);
-      
+
       instance.exec(`
         CREATE TABLE IF NOT EXISTS users (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -85,7 +85,7 @@ async function initDb() {
       return db;
     }
   })();
-  
+
   return dbPromise;
 }
 
@@ -313,7 +313,7 @@ apiRouter.get("/admin/matches/suggest/:requestId", authenticate, isAdmin, (req, 
 
 apiRouter.post("/admin/matches", authenticate, isAdmin, (req, res) => {
   const { donor_id, recipient_id, organ_id, request_id, organ_type } = req.body;
-  
+
   const transaction = db.transaction(() => {
     db.prepare(`
       INSERT INTO matches (donor_id, recipient_id, organ_id, request_id, organ_type, status)
@@ -348,6 +348,11 @@ apiRouter.get("/admin/users", authenticate, isAdmin, (req, res) => {
   res.json(users);
 });
 
+apiRouter.get("/admin/donors", authenticate, isAdmin, (req, res) => {
+  const donors = db.prepare("SELECT id, username, name, role, blood_group, contact FROM users WHERE role = 'DONOR'").all();
+  res.json(donors);
+});
+
 apiRouter.delete("/admin/users/:id", authenticate, isAdmin, (req, res) => {
   const { id } = req.params;
   const transaction = db.transaction(() => {
@@ -372,15 +377,15 @@ app.use("/api", apiRouter);
 async function startServer() {
   console.log("Initializing server...");
   await initDb();
-  
+
   const PORT = 3000;
-  
+
   if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
     console.log("Starting in DEVELOPMENT mode with Vite...");
     try {
       const { createServer: createViteServer } = await import("vite");
       const vite = await createViteServer({
-        server: { 
+        server: {
           middlewareMode: true,
           host: '0.0.0.0',
           port: PORT
