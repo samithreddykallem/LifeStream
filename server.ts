@@ -4,27 +4,162 @@ import jwt from "jsonwebtoken";
 import path from "path";
 import { fileURLToPath } from "url";
 
+import pg from "pg";
+const { Pool } = pg;
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-let db: any;
-let dbPromise: Promise<any> | null = null;
+interface DbInterface {
+  prepare(sql: string): {
+    run(...args: any[]): Promise<{ lastInsertRowid?: number | string }>;
+    get(...args: any[]): Promise<any>;
+    all(...args: any[]): Promise<any[]>;
+  };
+  exec(sql: string): Promise<void>;
+  transaction(cb: () => Promise<void>): Promise<void>;
+}
 
-async function initDb() {
+let db: DbInterface;
+let dbPromise: Promise<DbInterface> | null = null;
+
+async function initDb(): Promise<DbInterface> {
   if (dbPromise) return dbPromise;
 
   dbPromise = (async () => {
     try {
-      console.log("Attempting to load better-sqlite3...");
-      // Dynamic import to avoid bundling issues on Vercel
+      const dbUrl = process.env.DATABASE_URL;
+
+      if (dbUrl) {
+        console.log("[DB] Initializing Remote Postgres Database...");
+        const pool = new Pool({
+          connectionString: dbUrl,
+          ssl: { rejectUnauthorized: false }
+        });
+
+        const pgDb: DbInterface = {
+          prepare: (sql: string) => {
+            // Convert ? to $1, $2, etc. for Postgres
+            const pgSql = sql.replace(/\?/g, (_, offset, s) => `$${(s.slice(0, offset).match(/\?/g) || []).length + 1}`);
+            return {
+              run: async (...args: any[]) => {
+                const res = await pool.query(pgSql, args);
+                // Postgres doesn't have lastInsertRowid in the same way, usually use RETURNING
+                return { lastInsertRowid: (res.rows[0] as any)?.id };
+              },
+              get: async (...args: any[]) => {
+                const res = await pool.query(pgSql, args);
+                return res.rows[0];
+              },
+              all: async (...args: any[]) => {
+                const res = await pool.query(pgSql, args);
+                return res.rows;
+              }
+            };
+          },
+          exec: async (sql: string) => {
+            await pool.query(sql);
+          },
+          transaction: async (cb: () => Promise<void>) => {
+            const client = await pool.connect();
+            try {
+              await client.query('BEGIN');
+              await cb();
+              await client.query('COMMIT');
+            } catch (e) {
+              await client.query('ROLLBACK');
+              throw e;
+            } finally {
+              client.release();
+            }
+          }
+        };
+
+        await pgDb.exec(`
+          CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            username TEXT UNIQUE,
+            password TEXT,
+            name TEXT,
+            age INTEGER,
+            gender TEXT,
+            blood_group TEXT,
+            contact TEXT,
+            role TEXT
+          );
+          CREATE TABLE IF NOT EXISTS organs (
+            id SERIAL PRIMARY KEY,
+            organ_type TEXT,
+            blood_group TEXT,
+            donor_id INTEGER,
+            availability_status TEXT DEFAULT 'AVAILABLE',
+            date_added TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          );
+          CREATE TABLE IF NOT EXISTS organ_requests (
+            id SERIAL PRIMARY KEY,
+            recipient_id INTEGER,
+            organ_type TEXT,
+            blood_group TEXT,
+            urgency_level TEXT,
+            status TEXT DEFAULT 'PENDING',
+            date_requested TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            admin_note TEXT
+          );
+          CREATE TABLE IF NOT EXISTS matches (
+            id SERIAL PRIMARY KEY,
+            donor_id INTEGER,
+            recipient_id INTEGER,
+            organ_id INTEGER,
+            request_id INTEGER,
+            organ_type TEXT,
+            matched_on TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            status TEXT DEFAULT 'PENDING'
+          );
+        `);
+
+        // Check if admin exists
+        const admin = await pgDb.prepare("SELECT * FROM users WHERE username = 'admin'").get();
+        if (!admin) {
+          console.log("[DB] Creating default admin user in Postgres...");
+          const adminPassword = await bcrypt.hash("admin123", 10);
+          await pgDb.prepare(`
+            INSERT INTO users (username, password, name, age, gender, blood_group, contact, role)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `).run("admin", adminPassword, "System Admin", 35, "Male", "O+", "1234567890", "ADMIN");
+        }
+
+        db = pgDb;
+        console.log("[DB] Remote Postgres initialized successfully.");
+        return db;
+      }
+
+      console.log("[DB] Initializing Local SQLite Database...");
       const { default: Database } = await import("better-sqlite3");
-
       const dbPath = process.env.VERCEL ? ":memory:" : path.resolve(process.cwd(), "organ_donation.db");
-      console.log(`[DB] Attempting to initialize SQLite database at: ${dbPath}`);
       const instance = new Database(dbPath);
-      console.log(`[DB] Connection established to ${dbPath}`);
 
-      instance.exec(`
+      const sqliteDb: DbInterface = {
+        prepare: (sql: string) => {
+          const stmt = instance.prepare(sql);
+          return {
+            run: async (...args: any[]) => {
+              const info = stmt.run(...args);
+              return { lastInsertRowid: info.lastInsertRowid };
+            },
+            get: async (...args: any[]) => stmt.get(...args),
+            all: async (...args: any[]) => stmt.all(...args)
+          };
+        },
+        exec: async (sql: string) => {
+          instance.exec(sql);
+        },
+        transaction: async (cb: () => Promise<void>) => {
+          const trans = instance.transaction(cb as any);
+          await trans();
+        }
+      };
+
+      await sqliteDb.exec(`
         CREATE TABLE IF NOT EXISTS users (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           username TEXT UNIQUE,
@@ -66,22 +201,21 @@ async function initDb() {
         );
       `);
 
-      // Check if admin exists
-      const admin = instance.prepare("SELECT * FROM users WHERE username = 'admin'").get();
+      const admin = await sqliteDb.prepare("SELECT * FROM users WHERE username = 'admin'").get();
       if (!admin) {
-        console.log("Creating default admin user...");
+        console.log("[DB] Creating default admin user in SQLite...");
         const adminPassword = await bcrypt.hash("admin123", 10);
-        instance.prepare(`
+        await sqliteDb.prepare(`
           INSERT INTO users (username, password, name, age, gender, blood_group, contact, role)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `).run("admin", adminPassword, "System Admin", 35, "Male", "O+", "1234567890", "ADMIN");
       }
 
-      db = instance;
-      console.log("Database initialized successfully.");
+      db = sqliteDb;
+      console.log("[DB] Local SQLite initialized successfully.");
       return db;
     } catch (err) {
-      console.error("CRITICAL: Database initialization failed! Falling back to MOCK MODE. Data will NOT persist:", err);
+      console.error("[DB] CRITICAL: Initialization failed! Falling back to MOCK MODE.", err);
       db = setupMockDb();
       return db;
     }
@@ -90,25 +224,25 @@ async function initDb() {
   return dbPromise;
 }
 
-function setupMockDb() {
+function setupMockDb(): DbInterface {
   console.log("⚠️ RUNNING IN MOCK MODE: Data will not persist.");
   return {
     prepare: (sql: string) => ({
-      run: (...args: any[]) => {
+      run: async (...args: any[]) => {
         console.log(`[MOCK RUN] ${sql}`, args);
         return { lastInsertRowid: Math.floor(Math.random() * 1000) };
       },
-      get: (...args: any[]) => {
+      get: async (...args: any[]) => {
         console.log(`[MOCK GET] ${sql}`, args);
         return null;
       },
-      all: (...args: any[]) => {
+      all: async (...args: any[]) => {
         console.log(`[MOCK ALL] ${sql}`, args);
         return [];
       }
     }),
-    transaction: (cb: any) => cb,
-    exec: (sql: string) => {
+    transaction: async (cb: any) => cb(),
+    exec: async (sql: string) => {
       console.log(`[MOCK EXEC] ${sql}`);
     }
   };
@@ -169,7 +303,7 @@ apiRouter.post(["/auth/register", "/auth/register/"], async (req, res) => {
   const { username, password, name, age, gender, blood_group, contact, role } = req.body;
   const hashedPassword = await bcrypt.hash(password, 10);
   try {
-    const info = db.prepare(`
+    const info = await db.prepare(`
       INSERT INTO users (username, password, name, age, gender, blood_group, contact, role)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(username, hashedPassword, name, age, gender, blood_group, contact, role);
@@ -184,7 +318,7 @@ apiRouter.post(["/auth/register", "/auth/register/"], async (req, res) => {
 apiRouter.post(["/auth/login", "/auth/login/"], async (req, res) => {
   console.log("Login request received:", req.body?.username);
   const { username, password } = req.body;
-  const user: any = db.prepare("SELECT * FROM users WHERE username = ?").get(username);
+  const user: any = await db.prepare("SELECT * FROM users WHERE username = ?").get(username);
   if (!user || !(await bcrypt.compare(password, user.password))) {
     console.log("Invalid login attempt for:", username);
     return res.status(401).json({ error: "Invalid credentials" });
@@ -195,14 +329,14 @@ apiRouter.post(["/auth/login", "/auth/login/"], async (req, res) => {
   res.json({ token, user: userWithoutPassword });
 });
 
-apiRouter.get("/auth/me", authenticate, (req: any, res) => {
-  const user = db.prepare("SELECT id, username, name, role, age, gender, blood_group, contact FROM users WHERE id = ?").get(req.user.id);
+apiRouter.get("/auth/me", authenticate, async (req: any, res) => {
+  const user = await db.prepare("SELECT id, username, name, role, age, gender, blood_group, contact FROM users WHERE id = ?").get(req.user.id);
   res.json(user);
 });
 
 // --- ORGAN ROUTES ---
 
-apiRouter.get("/organs", authenticate, (req: any, res) => {
+apiRouter.get("/organs", authenticate, async (req: any, res) => {
   const { type, bloodGroup } = req.query;
   let query = "SELECT organs.*, users.name as donor_name FROM organs JOIN users ON organs.donor_id = users.id WHERE availability_status = 'AVAILABLE'";
   const params: any[] = [];
@@ -214,13 +348,13 @@ apiRouter.get("/organs", authenticate, (req: any, res) => {
     query += " AND blood_group = ?";
     params.push(bloodGroup);
   }
-  const organs = db.prepare(query).all(...params);
+  const organs = await db.prepare(query).all(...params);
   res.json(organs);
 });
 
-apiRouter.post("/organs", authenticate, (req: any, res) => {
+apiRouter.post("/organs", authenticate, async (req: any, res) => {
   const { organ_type, blood_group } = req.body;
-  const info = db.prepare(`
+  const info = await db.prepare(`
     INSERT INTO organs (organ_type, blood_group, donor_id)
     VALUES (?, ?, ?)
   `).run(organ_type, blood_group, req.user.id);
@@ -229,37 +363,37 @@ apiRouter.post("/organs", authenticate, (req: any, res) => {
 
 // --- REQUEST ROUTES ---
 
-apiRouter.post("/requests", authenticate, (req: any, res) => {
+apiRouter.post("/requests", authenticate, async (req: any, res) => {
   const { organ_type, blood_group, urgency_level } = req.body;
-  const info = db.prepare(`
+  const info = await db.prepare(`
     INSERT INTO organ_requests (recipient_id, organ_type, blood_group, urgency_level)
     VALUES (?, ?, ?, ?)
   `).run(req.user.id, organ_type, blood_group, urgency_level);
   res.json({ id: info.lastInsertRowid });
 });
 
-apiRouter.get("/requests/my", authenticate, (req: any, res) => {
-  const requests = db.prepare("SELECT * FROM organ_requests WHERE recipient_id = ? ORDER BY date_requested DESC").all(req.user.id);
+apiRouter.get("/requests/my", authenticate, async (req: any, res) => {
+  const requests = await db.prepare("SELECT * FROM organ_requests WHERE recipient_id = ? ORDER BY date_requested DESC").all(req.user.id);
   res.json(requests);
 });
 
 // --- ADMIN ROUTES ---
 
-apiRouter.get("/admin/stats", authenticate, isAdmin, (req, res) => {
-  const totalDonors = db.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'DONOR'").get() as any;
-  const totalRecipients = db.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'RECIPIENT'").get() as any;
-  const pendingRequests = db.prepare("SELECT COUNT(*) as count FROM organ_requests WHERE status = 'PENDING'").get() as any;
-  const matchedOrgans = db.prepare("SELECT COUNT(*) as count FROM matches").get() as any;
+apiRouter.get("/admin/stats", authenticate, isAdmin, async (req, res) => {
+  const totalDonors = await db.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'DONOR'").get() as any;
+  const totalRecipients = await db.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'RECIPIENT'").get() as any;
+  const pendingRequests = await db.prepare("SELECT COUNT(*) as count FROM organ_requests WHERE status = 'PENDING'").get() as any;
+  const matchedOrgans = await db.prepare("SELECT COUNT(*) as count FROM matches").get() as any;
   res.json({
-    donors: totalDonors.count,
-    recipients: totalRecipients.count,
-    pending: pendingRequests.count,
-    matches: matchedOrgans.count
+    donors: Number(totalDonors.count),
+    recipients: Number(totalRecipients.count),
+    pending: Number(pendingRequests.count),
+    matches: Number(matchedOrgans.count)
   });
 });
 
-apiRouter.get("/admin/requests", authenticate, isAdmin, (req, res) => {
-  const requests = db.prepare(`
+apiRouter.get("/admin/requests", authenticate, isAdmin, async (req, res) => {
+  const requests = await db.prepare(`
     SELECT organ_requests.*, users.name as recipient_name 
     FROM organ_requests 
     JOIN users ON organ_requests.recipient_id = users.id 
@@ -275,19 +409,19 @@ apiRouter.get("/admin/requests", authenticate, isAdmin, (req, res) => {
   res.json(requests);
 });
 
-apiRouter.post("/admin/requests/:id/status", authenticate, isAdmin, (req, res) => {
+apiRouter.post("/admin/requests/:id/status", authenticate, isAdmin, async (req, res) => {
   const { status, admin_note } = req.body;
   const { id } = req.params;
-  db.prepare("UPDATE organ_requests SET status = ?, admin_note = ? WHERE id = ?").run(status, admin_note, id);
+  await db.prepare("UPDATE organ_requests SET status = ?, admin_note = ? WHERE id = ?").run(status, admin_note, id);
   res.json({ success: true });
 });
 
-apiRouter.get("/admin/matches/suggest/:requestId", authenticate, isAdmin, (req, res) => {
+apiRouter.get("/admin/matches/suggest/:requestId", authenticate, isAdmin, async (req, res) => {
   const { requestId } = req.params;
-  const request: any = db.prepare("SELECT * FROM organ_requests WHERE id = ?").get(requestId);
+  const request: any = await db.prepare("SELECT * FROM organ_requests WHERE id = ?").get(requestId);
   if (!request) return res.status(404).json({ error: "Request not found" });
 
-  const availableOrgans = db.prepare(`
+  const availableOrgans = await db.prepare(`
     SELECT organs.*, users.name as donor_name, users.blood_group as donor_blood_group
     FROM organs 
     JOIN users ON organs.donor_id = users.id 
@@ -312,29 +446,27 @@ apiRouter.get("/admin/matches/suggest/:requestId", authenticate, isAdmin, (req, 
   res.json(suggestions);
 });
 
-apiRouter.post("/admin/matches", authenticate, isAdmin, (req, res) => {
+apiRouter.post("/admin/matches", authenticate, isAdmin, async (req, res) => {
   const { donor_id, recipient_id, organ_id, request_id, organ_type } = req.body;
 
-  const transaction = db.transaction(() => {
-    db.prepare(`
-      INSERT INTO matches (donor_id, recipient_id, organ_id, request_id, organ_type, status)
-      VALUES (?, ?, ?, ?, ?, 'COMPLETED')
-    `).run(donor_id, recipient_id, organ_id, request_id, organ_type);
-
-    db.prepare("UPDATE organs SET availability_status = 'MATCHED' WHERE id = ?").run(organ_id);
-    db.prepare("UPDATE organ_requests SET status = 'APPROVED', admin_note = 'Matched with compatible donor' WHERE id = ?").run(request_id);
-  });
-
   try {
-    transaction();
+    await db.transaction(async () => {
+      await db.prepare(`
+        INSERT INTO matches (donor_id, recipient_id, organ_id, request_id, organ_type, status)
+        VALUES (?, ?, ?, ?, ?, 'COMPLETED')
+      `).run(donor_id, recipient_id, organ_id, request_id, organ_type);
+
+      await db.prepare("UPDATE organs SET availability_status = 'MATCHED' WHERE id = ?").run(organ_id);
+      await db.prepare("UPDATE organ_requests SET status = 'APPROVED', admin_note = 'Matched with compatible donor' WHERE id = ?").run(request_id);
+    });
     res.json({ success: true });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }
 });
 
-apiRouter.get("/admin/matches", authenticate, isAdmin, (req, res) => {
-  const matches = db.prepare(`
+apiRouter.get("/admin/matches", authenticate, isAdmin, async (req, res) => {
+  const matches = await db.prepare(`
     SELECT matches.*, d.name as donor_name, r.name as recipient_name
     FROM matches
     JOIN users d ON matches.donor_id = d.id
@@ -344,26 +476,25 @@ apiRouter.get("/admin/matches", authenticate, isAdmin, (req, res) => {
   res.json(matches);
 });
 
-apiRouter.get("/admin/users", authenticate, isAdmin, (req, res) => {
-  const users = db.prepare("SELECT id, username, name, role, blood_group, contact FROM users WHERE role != 'ADMIN'").all();
+apiRouter.get("/admin/users", authenticate, isAdmin, async (req, res) => {
+  const users = await db.prepare("SELECT id, username, name, role, blood_group, contact FROM users WHERE role != 'ADMIN'").all();
   res.json(users);
 });
 
-apiRouter.get("/admin/donors", authenticate, isAdmin, (req, res) => {
-  const donors = db.prepare("SELECT id, username, name, role, blood_group, contact FROM users WHERE role = 'DONOR'").all();
+apiRouter.get("/admin/donors", authenticate, isAdmin, async (req, res) => {
+  const donors = await db.prepare("SELECT id, username, name, role, blood_group, contact FROM users WHERE role = 'DONOR'").all();
   res.json(donors);
 });
 
-apiRouter.delete("/admin/users/:id", authenticate, isAdmin, (req, res) => {
+apiRouter.delete("/admin/users/:id", authenticate, isAdmin, async (req, res) => {
   const { id } = req.params;
-  const transaction = db.transaction(() => {
-    db.prepare("DELETE FROM matches WHERE donor_id = ? OR recipient_id = ?").run(id, id);
-    db.prepare("DELETE FROM organ_requests WHERE recipient_id = ?").run(id);
-    db.prepare("DELETE FROM organs WHERE donor_id = ?").run(id);
-    db.prepare("DELETE FROM users WHERE id = ?").run(id);
-  });
   try {
-    transaction();
+    await db.transaction(async () => {
+      await db.prepare("DELETE FROM matches WHERE donor_id = ? OR recipient_id = ?").run(id, id);
+      await db.prepare("DELETE FROM organ_requests WHERE recipient_id = ?").run(id);
+      await db.prepare("DELETE FROM organs WHERE donor_id = ?").run(id);
+      await db.prepare("DELETE FROM users WHERE id = ?").run(id);
+    });
     res.json({ success: true });
   } catch (err: any) {
     res.status(400).json({ error: err.message });

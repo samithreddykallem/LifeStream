@@ -25,7 +25,7 @@ import { cn } from './utils';
 
 // --- API SERVICE ---
 
-const API_URL = window.location.origin;
+const API_URL = 'http://localhost:8000';
 
 const api = {
   async fetch(endpoint: string, options: RequestInit = {}) {
@@ -35,7 +35,12 @@ const api = {
       ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
       ...options.headers,
     };
-    const response = await fetch(`${API_URL}${endpoint}`, { ...options, headers });
+    let normalizedEndpoint = endpoint;
+    const [path, query] = endpoint.split('?');
+    if (!path.endsWith('/')) {
+      normalizedEndpoint = `${path}/${query ? `?${query}` : ''}`;
+    }
+    const response = await fetch(`${API_URL}${normalizedEndpoint}`, { ...options, headers });
 
     const text = await response.text();
     let data: any;
@@ -948,9 +953,18 @@ export default function App() {
         const res = await api.fetch('/api/auth/me');
         setUser(res);
         const savedView = localStorage.getItem('view');
-        updateView(savedView && savedView !== 'auth' && savedView !== 'landing' ? savedView : 'dashboard');
+        if (savedView === 'auth' || savedView === 'landing') {
+          updateView('dashboard');
+        }
       } catch (err) {
         localStorage.removeItem('token');
+        setUser(null);
+        updateView('landing');
+      }
+    } else {
+      const savedView = localStorage.getItem('view');
+      if (savedView && savedView !== 'auth' && savedView !== 'landing') {
+        updateView('landing');
       }
     }
     setLoading(false);
@@ -963,14 +977,17 @@ export default function App() {
     updateView('landing');
   };
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
+  if (loading) return <div className="min-h-screen flex items-center justify-center bg-slate-50 text-indigo-600 font-bold">Loading LifeStream...</div>;
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
-      {view === 'landing' && <LandingPage onStart={() => updateView('auth')} />}
-      {view === 'auth' && <AuthPage onLogin={(u) => { setUser(u); updateView('dashboard'); }} />}
-
-      {user && (view === 'dashboard' || view === 'profile' || view === 'admin-users' || view === 'admin-organs') && (
+      {!user ? (
+        view === 'auth' ? (
+          <AuthPage onLogin={(u) => { setUser(u); updateView('dashboard'); }} />
+        ) : (
+          <LandingPage onStart={() => updateView('auth')} />
+        )
+      ) : (
         <div className="flex flex-col min-h-screen">
           <nav className="bg-white border-b border-slate-200 sticky top-0 z-40">
             <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
@@ -987,7 +1004,7 @@ export default function App() {
                     onClick={() => updateView('dashboard')}
                     className={cn(
                       "text-sm font-bold transition-colors",
-                      (view === 'dashboard' || view === 'landing') ? "text-indigo-600" : "text-slate-500 hover:text-slate-900"
+                      (view === 'dashboard') ? "text-indigo-600" : "text-slate-500 hover:text-slate-900"
                     )}
                   >
                     Dashboard
