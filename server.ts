@@ -19,9 +19,10 @@ async function initDb() {
       // Dynamic import to avoid bundling issues on Vercel
       const { default: Database } = await import("better-sqlite3");
 
-      const dbPath = process.env.VERCEL ? ":memory:" : "organ_donation.db";
-      console.log(`Initializing Database at: ${dbPath}`);
+      const dbPath = process.env.VERCEL ? ":memory:" : path.resolve(process.cwd(), "organ_donation.db");
+      console.log(`[DB] Attempting to initialize SQLite database at: ${dbPath}`);
       const instance = new Database(dbPath);
+      console.log(`[DB] Connection established to ${dbPath}`);
 
       instance.exec(`
         CREATE TABLE IF NOT EXISTS users (
@@ -80,7 +81,7 @@ async function initDb() {
       console.log("Database initialized successfully.");
       return db;
     } catch (err) {
-      console.error("Database initialization failed, using mock mode:", err);
+      console.error("CRITICAL: Database initialization failed! Falling back to MOCK MODE. Data will NOT persist:", err);
       db = setupMockDb();
       return db;
     }
@@ -164,7 +165,7 @@ const isAdmin = (req: any, res: any, next: any) => {
 // --- AUTH ROUTES ---
 
 apiRouter.post(["/auth/register", "/auth/register/"], async (req, res) => {
-  console.log("Registration request received:", req.body?.username);
+  console.log(`[AUTH] Registering user: ${req.body?.username} (Role: ${req.body?.role})`);
   const { username, password, name, age, gender, blood_group, contact, role } = req.body;
   const hashedPassword = await bcrypt.hash(password, 10);
   try {

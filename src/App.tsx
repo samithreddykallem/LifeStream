@@ -915,7 +915,12 @@ const ProfilePage = ({ user }: { user: User }) => {
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
-  const [view, setView] = useState<'landing' | 'auth' | 'dashboard' | 'profile' | 'admin-users' | 'admin-organs'>('landing');
+  const [view, setView] = useState<any>(localStorage.getItem('view') || 'landing');
+
+  const updateView = (newView: any) => {
+    setView(newView);
+    localStorage.setItem('view', newView);
+  };
 
   const [loading, setLoading] = useState(true);
 
@@ -931,7 +936,7 @@ export default function App() {
     };
     init();
 
-    const handleViewChange = (e: any) => setView(e.detail);
+    const handleViewChange = (e: any) => updateView(e.detail);
     window.addEventListener('change-view', handleViewChange);
     return () => window.removeEventListener('change-view', handleViewChange);
   }, []);
@@ -942,7 +947,8 @@ export default function App() {
       try {
         const res = await api.fetch('/api/auth/me');
         setUser(res);
-        setView('dashboard');
+        const savedView = localStorage.getItem('view');
+        updateView(savedView && savedView !== 'auth' && savedView !== 'landing' ? savedView : 'dashboard');
       } catch (err) {
         localStorage.removeItem('token');
       }
@@ -952,16 +958,17 @@ export default function App() {
 
   const handleLogout = () => {
     localStorage.removeItem('token');
+    localStorage.removeItem('view');
     setUser(null);
-    setView('landing');
+    updateView('landing');
   };
 
   if (loading) return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
-      {view === 'landing' && <LandingPage onStart={() => setView('auth')} />}
-      {view === 'auth' && <AuthPage onLogin={(u) => { setUser(u); setView('dashboard'); }} />}
+      {view === 'landing' && <LandingPage onStart={() => updateView('auth')} />}
+      {view === 'auth' && <AuthPage onLogin={(u) => { setUser(u); updateView('dashboard'); }} />}
 
       {user && (view === 'dashboard' || view === 'profile' || view === 'admin-users' || view === 'admin-organs') && (
         <div className="flex flex-col min-h-screen">
@@ -977,7 +984,7 @@ export default function App() {
               <div className="flex items-center gap-8">
                 <div className="hidden md:flex items-center gap-6">
                   <button
-                    onClick={() => setView('dashboard')}
+                    onClick={() => updateView('dashboard')}
                     className={cn(
                       "text-sm font-bold transition-colors",
                       (view === 'dashboard' || view === 'landing') ? "text-indigo-600" : "text-slate-500 hover:text-slate-900"
@@ -988,7 +995,7 @@ export default function App() {
                   {user.role === 'ADMIN' && (
                     <>
                       <button
-                        onClick={() => setView('admin-users')}
+                        onClick={() => updateView('admin-users')}
                         className={cn(
                           "text-sm font-bold transition-colors",
                           view === 'admin-users' ? "text-indigo-600" : "text-slate-500 hover:text-slate-900"
@@ -997,7 +1004,7 @@ export default function App() {
                         Users
                       </button>
                       <button
-                        onClick={() => setView('admin-organs')}
+                        onClick={() => updateView('admin-organs')}
                         className={cn(
                           "text-sm font-bold transition-colors",
                           view === 'admin-organs' ? "text-indigo-600" : "text-slate-500 hover:text-slate-900"
@@ -1008,7 +1015,7 @@ export default function App() {
                     </>
                   )}
                   <button
-                    onClick={() => setView('profile')}
+                    onClick={() => updateView('profile')}
                     className={cn(
                       "text-sm font-bold transition-colors",
                       view === 'profile' ? "text-indigo-600" : "text-slate-500 hover:text-slate-900"
